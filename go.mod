@@ -1,3 +1,3 @@
-module github.com/juicedata/gogfapi
+module github.com/kmlebedev/gogfapi
 
-go 1.19
+go 1.23
