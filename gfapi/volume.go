@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"strings"
 	"syscall"
 	"time"
 	"unsafe"
@@ -38,9 +39,7 @@ type Volume struct {
 // * Assumes tcp transport and glusterd is listening on 24007
 func (v *Volume) Init(volname string, hosts ...string) error {
 	cvolname := C.CString(volname)
-	ctrans := C.CString("tcp")
 	defer C.free(unsafe.Pointer(cvolname))
-	defer C.free(unsafe.Pointer(ctrans))
 
 	v.fs = C.glfs_new(cvolname)
 	if v.fs == nil {
@@ -48,7 +47,12 @@ func (v *Volume) Init(volname string, hosts ...string) error {
 	}
 
 	for i, host := range hosts {
+		ctrans := C.CString("tcp")
+		if strings.HasSuffix(host, ".socket") {
+			ctrans = C.CString("unix")
+		}
 		chost := C.CString(host)
+		defer C.free(unsafe.Pointer(ctrans))
 		defer C.free(unsafe.Pointer(chost))
 		// NOTE: This API is special, multiple calls to this function with different
 		// volfile servers, port or transport-type would create a list of volfile
@@ -145,11 +149,20 @@ func (v *Volume) SetLogging(name string, logLevel LogLevel) error {
 	return nil
 }
 
-// Unmount ends the virtual mount.
+// Unmount ends the virtual mount. Return
+// >0: filled N bytes of buffer
+// 0: no volfile available
+// <0: volfile length exceeds @len by N bytes (@buf unchanged)
 func (v *Volume) Unmount() error {
+	if v.fs == nil {
+		return nil
+	}
 	ret, err := C.glfs_fini(v.fs)
+	if err != nil {
+		return fmt.Errorf("failure to unmount volume: %v", err)
+	}
 	if int(ret) < 0 {
-		return fmt.Errorf("failure to unmount volume: %s", err)
+		return fmt.Errorf("failure to unmount volume: volfile length exceeds")
 	}
 	return nil
 }
@@ -209,7 +222,7 @@ func (v *Volume) Create(name string) (*File, error) {
 		return nil, &os.PathError{"create", name, err}
 	}
 
-	return &File{name, Fd{cfd}, false}, nil
+	return NewFile(name, &Glfs{cfd}, false), nil
 }
 
 // Unlink attempts to unlink a file a path and returns a non-nil error on failure.
@@ -329,24 +342,31 @@ func (v *Volume) MkdirAll(path string, perm os.FileMode) error {
 //
 // Returns a File object on success and a os.PathError on failure.
 func (v *Volume) Open(name string) (*File, error) {
-	isDir := false
+	var isDir bool
 
+	if stat, err := v.Stat(name); err != nil {
+		return nil, &os.PathError{"open", name, err}
+	} else {
+		isDir = stat.IsDir()
+	}
 	cname := C.CString(name)
 	defer C.free(unsafe.Pointer(cname))
 
-	cfd, err := C.glfs_open(v.fs, cname, C.int(os.O_RDONLY))
-
-	// Try to reopen using glfs_opendir if the given path is a directory
-	if err == syscall.EISDIR {
-		isDir = true
+	var cfd *C.glfs_fd_t
+	var err error
+	if isDir {
 		cfd, err = C.glfs_opendir(v.fs, cname)
+	} else {
+		cfd, err = C.glfs_open(v.fs, cname, C.int(os.O_RDONLY))
 	}
-
+	if err != nil {
+		return nil, &os.PathError{"open", name, fmt.Errorf("glfs_open: %v", err)}
+	}
 	if cfd == nil {
 		return nil, &os.PathError{"open", name, err}
 	}
 
-	return &File{name, Fd{cfd}, isDir}, nil
+	return NewFile(name, &Glfs{cfd}, isDir), nil
 }
 
 // OpenFile opens the named file on the the Volume v.
@@ -362,8 +382,6 @@ func (v *Volume) Open(name string) (*File, error) {
 // BUG : perm is not used for opening the file.
 // NOTE: It is better to use Open, Create etc. instead of using OpenFile directly
 func (v *Volume) OpenFile(name string, flags int, perm os.FileMode) (*File, error) {
-	isDir := false
-
 	cname := C.CString(name)
 	defer C.free(unsafe.Pointer(cname))
 
@@ -375,17 +393,23 @@ func (v *Volume) OpenFile(name string, flags int, perm os.FileMode) (*File, erro
 		cfd, err = C.glfs_open(v.fs, cname, C.int(flags))
 	}
 
-	// Try to reopen using glfs_opendir if the given path is a directory
-	if err == syscall.EISDIR {
-		isDir = true
-		cfd, err = C.glfs_opendir(v.fs, cname)
-	}
-
 	if cfd == nil {
 		return nil, &os.PathError{"open", name, err}
 	}
 
-	return &File{name, Fd{cfd}, isDir}, nil
+	return NewFile(name, &Glfs{cfd}, false), nil
+}
+
+func (v *Volume) OpenDir(name string) (*File, error) {
+	cname := C.CString(name)
+	defer C.free(unsafe.Pointer(cname))
+
+	cfd, err := C.glfs_opendir(v.fs, cname)
+	if cfd == nil {
+		return nil, &os.PathError{"open", name, err}
+	}
+
+	return NewFile(name, &Glfs{cfd}, true), nil
 }
 
 // Stat returns an os.FileInfo object describing the named file

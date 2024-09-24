@@ -18,9 +18,13 @@ import (
 
 // File is the gluster file object.
 type File struct {
-	name string
-	Fd
+	name  string
+	glfs  *Glfs
 	isDir bool
+}
+
+func NewFile(name string, glfs *Glfs, isDir bool) *File {
+	return &File{name: name, glfs: glfs, isDir: isDir}
 }
 
 // Close closes an open File.
@@ -32,9 +36,9 @@ func (f *File) Close() error {
 	var ret C.int
 
 	if f.isDir {
-		ret, err = C.glfs_closedir(f.Fd.fd)
+		ret, err = C.glfs_closedir(f.glfs.fd)
 	} else {
-		ret, err = C.glfs_close(f.Fd.fd)
+		ret, err = C.glfs_close(f.glfs.fd)
 	}
 	if ret < 0 {
 		return err
@@ -52,19 +56,19 @@ func (f *File) Chdir() error {
 //
 // Returns an error on failure
 func (f *File) Chmod(mode os.FileMode) error {
-	return f.Fd.Fchmod(posixMode(mode))
+	return f.glfs.Fchmod(posixMode(mode))
 }
 
 // Chown has not been implemented yet
 func (f *File) Chown(uid, gid int) error {
-	return f.Fd.Fchown(uint32(uid), uint32(gid))
+	return f.glfs.Fchown(uint32(uid), uint32(gid))
 }
 
 func (f *File) Futimens(atime, mtime time.Time) error {
 	var times [2]C.struct_timespec
 	times[0] = C.struct_timespec{tv_sec: C.long(atime.Unix()), tv_nsec: C.long(atime.Nanosecond())}
 	times[1] = C.struct_timespec{tv_sec: C.long(mtime.Unix()), tv_nsec: C.long(mtime.Nanosecond())}
-	return f.Fd.Futimens(times)
+	return f.glfs.Futimens(times)
 }
 
 // Name returns the name of the opened file
@@ -79,7 +83,7 @@ func (f *File) Read(b []byte) (n int, err error) {
 	if f == nil {
 		return 0, os.ErrInvalid
 	}
-	n, e := f.Fd.Read(b)
+	n, e := f.glfs.Read(b)
 	if n == 0 && len(b) > 0 && e == nil {
 		return 0, io.EOF
 	}
@@ -93,7 +97,7 @@ func (f *File) Read(b []byte) (n int, err error) {
 //
 // Returns number of bytes read and an error if any
 func (f *File) ReadAt(b []byte, off int64) (int, error) {
-	return f.Fd.Pread(b, off)
+	return f.glfs.Pread(b, off)
 }
 
 // Readdir returns the information of files in a directory.
@@ -102,14 +106,18 @@ func (f *File) ReadAt(b []byte, off int64) (int, error) {
 // the maximum they can be obtained in successive calls. If maximum is 0
 // then all the items will be returned.
 func (f *File) Readdir(n int) ([]os.FileInfo, error) {
-	return f.Fd.Readdir(n)
+	return f.glfs.Readdir(n)
+}
+
+func (f *File) ReaddirR(n int) ([]os.FileInfo, error) {
+	return f.glfs.ReaddirR(n)
 }
 
 // Readdirnames returns the names of files in a directory.
 //
 // n is the maximum number of items to return and works the same way as Readdir.
 func (f *File) Readdirnames(n int) ([]string, error) {
-	return f.Fd.Readdirnames(n)
+	return f.glfs.Readdirnames(n)
 }
 
 // Seek sets the offset for the next read or write on the file based on whence,
@@ -117,7 +125,7 @@ func (f *File) Readdirnames(n int) ([]string, error) {
 //
 // Returns new offset and an error if any
 func (f *File) Seek(offset int64, whence int) (int64, error) {
-	return f.Fd.lseek(offset, whence)
+	return f.glfs.lseek(offset, whence)
 }
 
 // Stat returns an os.FileInfo object describing the file
@@ -125,7 +133,7 @@ func (f *File) Seek(offset int64, whence int) (int64, error) {
 // Returns an error on failure
 func (f *File) Stat() (os.FileInfo, error) {
 	var stat syscall.Stat_t
-	err := f.Fd.Fstat(&stat)
+	err := f.glfs.Fstat(&stat)
 
 	if err != nil {
 		return nil, err
@@ -137,14 +145,14 @@ func (f *File) Stat() (os.FileInfo, error) {
 //
 // Returns error on failure
 func (f *File) Sync() error {
-	return f.Fd.Fsync()
+	return f.glfs.Fsync()
 }
 
 // Truncate changes the size of the file
 //
 // Returns error on failure
 func (f *File) Truncate(size int64) error {
-	return f.Fd.Ftruncate(size)
+	return f.glfs.Ftruncate(size)
 }
 
 // Write writes len(b) bytes to the file
@@ -154,7 +162,7 @@ func (f *File) Write(b []byte) (n int, err error) {
 	if f == nil {
 		return 0, os.ErrInvalid
 	}
-	n, e := f.Fd.Write(b)
+	n, e := f.glfs.Write(b)
 
 	if n != len(b) {
 		err = io.ErrShortWrite
@@ -169,7 +177,7 @@ func (f *File) Write(b []byte) (n int, err error) {
 //
 // Returns number of bytes written and an error if any
 func (f *File) WriteAt(b []byte, off int64) (int, error) {
-	return f.Fd.Pwrite(b, off)
+	return f.glfs.Pwrite(b, off)
 }
 
 // WriteString writes the contents of string s to the file
@@ -183,26 +191,26 @@ func (f *File) WriteString(s string) (int, error) {
 //
 // Returns error on failure
 func (f *File) Fallocate(mode int, offset int64, len int64) error {
-	return f.Fd.Fallocate(mode, offset, len)
+	return f.glfs.Fallocate(mode, offset, len)
 }
 
 // Get value of the extended attribute 'attr' and place it in 'dest'
 //
 // Returns number of bytes placed in 'dest' and error if any
 func (f *File) Getxattr(attr string, dest []byte) (int64, error) {
-	return f.Fd.Fgetxattr(attr, dest)
+	return f.glfs.Fgetxattr(attr, dest)
 }
 
 // Set extended attribute with key 'attr' and value 'data'
 //
 // Returns error on failure
 func (f *File) Setxattr(attr string, data []byte, flags int) error {
-	return f.Fd.Fsetxattr(attr, data, flags)
+	return f.glfs.Fsetxattr(attr, data, flags)
 }
 
 // Remove extended attribute named 'attr'
 //
 // Returns error on failure
 func (f *File) Removexattr(attr string) error {
-	return f.Fd.Fremovexattr(attr)
+	return f.glfs.Fremovexattr(attr)
 }
