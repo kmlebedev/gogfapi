@@ -1,21 +1,24 @@
 package gfapi
 
+import "C"
+import (
+	"fmt"
+	"os"
+	"syscall"
+	"unsafe"
+)
+
 // This file includes lower level operations on fd like the ones in the 'syscall' package
 
 // #cgo pkg-config: glusterfs-api
 // #include "glusterfs/api/glfs.h"
 // #include <stdlib.h>
 // #include <sys/stat.h>
+// #include <dirent.h>
 import "C"
 
-import (
-	"os"
-	"syscall"
-	"unsafe"
-)
-
 // Fd is the glusterfs fd type
-type Fd struct {
+type Glfs struct {
 	fd *C.glfs_fd_t
 }
 
@@ -24,7 +27,7 @@ var _zero uintptr
 // Fchmod changes the mode of the Fd to the given mode
 //
 // Returns error on failure
-func (fd *Fd) Fchmod(mode uint32) error {
+func (fd *Glfs) Fchmod(mode uint32) error {
 	_, err := C.glfs_fchmod(fd.fd, C.mode_t(mode))
 
 	return err
@@ -33,7 +36,7 @@ func (fd *Fd) Fchmod(mode uint32) error {
 // Fchown changes the uid and gid of the Fd
 //
 // Returns error on failure
-func (fd *Fd) Fchown(uid, gid uint32) error {
+func (fd *Glfs) Fchown(uid, gid uint32) error {
 	_, err := C.glfs_fchown(fd.fd, C.uid_t(uid), C.gid_t(gid))
 
 	return err
@@ -42,7 +45,7 @@ func (fd *Fd) Fchown(uid, gid uint32) error {
 // Futimens changes the atime and mtime of the Fd
 //
 // Returns error on failure
-func (fd *Fd) Futimens(times [2]C.struct_timespec) error {
+func (fd *Glfs) Futimens(times [2]C.struct_timespec) error {
 	_, err := C.glfs_futimens(fd.fd, &times[0])
 
 	return err
@@ -51,7 +54,7 @@ func (fd *Fd) Futimens(times [2]C.struct_timespec) error {
 // Fstat performs an fstat call on the Fd and saves stat details in the passed stat structure
 //
 // Returns error on failure
-func (fd *Fd) Fstat(stat *syscall.Stat_t) error {
+func (fd *Glfs) Fstat(stat *syscall.Stat_t) error {
 	ret, err := C.glfs_fstat(fd.fd, (*C.struct_stat)(unsafe.Pointer(stat)))
 	if int(ret) < 0 {
 		return err
@@ -62,7 +65,7 @@ func (fd *Fd) Fstat(stat *syscall.Stat_t) error {
 // Fsync performs an fsync on the Fd
 //
 // Returns error on failure
-func (fd *Fd) Fsync() error {
+func (fd *Glfs) Fsync() error {
 	ret, err := C.glfs_fsync(fd.fd, nil, nil)
 	if ret < 0 {
 		return err
@@ -73,7 +76,7 @@ func (fd *Fd) Fsync() error {
 // Ftruncate truncates the size of the Fd to the given size
 //
 // Returns error on failure
-func (fd *Fd) Ftruncate(size int64) error {
+func (fd *Glfs) Ftruncate(size int64) error {
 	_, err := C.glfs_ftruncate(fd.fd, C.off_t(size), nil, nil)
 
 	return err
@@ -82,7 +85,7 @@ func (fd *Fd) Ftruncate(size int64) error {
 // Pread reads at most len(b) bytes into b from offset off in Fd
 //
 // Returns number of bytes read on success and error on failure
-func (fd *Fd) Pread(b []byte, off int64) (int, error) {
+func (fd *Glfs) Pread(b []byte, off int64) (int, error) {
 	n, err := C.glfs_pread(fd.fd, unsafe.Pointer(&b[0]), C.size_t(len(b)), C.off_t(off), 0, nil)
 
 	return int(n), err
@@ -91,7 +94,7 @@ func (fd *Fd) Pread(b []byte, off int64) (int, error) {
 // Pwrite writes len(b) bytes from b into the Fd from offset off
 //
 // Returns number of bytes written on success and error on failure
-func (fd *Fd) Pwrite(b []byte, off int64) (int, error) {
+func (fd *Glfs) Pwrite(b []byte, off int64) (int, error) {
 	n, err := C.glfs_pwrite(fd.fd, unsafe.Pointer(&b[0]), C.size_t(len(b)), C.off_t(off), 0, nil, nil)
 
 	return int(n), err
@@ -100,7 +103,7 @@ func (fd *Fd) Pwrite(b []byte, off int64) (int, error) {
 // Read reads at most len(b) bytes into b from Fd
 //
 // Returns number of bytes read on success and error on failure
-func (fd *Fd) Read(b []byte) (n int, err error) {
+func (fd *Glfs) Read(b []byte) (n int, err error) {
 	var p0 unsafe.Pointer
 
 	if len(b) > 0 {
@@ -124,7 +127,7 @@ func (fd *Fd) Read(b []byte) (n int, err error) {
 // Write writes len(b) bytes from b into the Fd
 //
 // Returns number of bytes written on success and error on failure
-func (fd *Fd) Write(b []byte) (n int, err error) {
+func (fd *Glfs) Write(b []byte) (n int, err error) {
 	var p0 unsafe.Pointer
 
 	if len(b) > 0 {
@@ -145,13 +148,13 @@ func (fd *Fd) Write(b []byte) (n int, err error) {
 	return n, err
 }
 
-func (fd *Fd) lseek(offset int64, whence int) (int64, error) {
+func (fd *Glfs) lseek(offset int64, whence int) (int64, error) {
 	ret, err := C.glfs_lseek(fd.fd, C.off_t(offset), C.int(whence))
 
 	return int64(ret), err
 }
 
-func (fd *Fd) Fallocate(mode int, offset int64, len int64) error {
+func (fd *Glfs) Fallocate(mode int, offset int64, len int64) error {
 	ret, err := C.glfs_fallocate(fd.fd, C.int(mode),
 		C.off_t(offset), C.size_t(len))
 
@@ -161,7 +164,7 @@ func (fd *Fd) Fallocate(mode int, offset int64, len int64) error {
 	return err
 }
 
-func (fd *Fd) Fgetxattr(attr string, dest []byte) (int64, error) {
+func (fd *Glfs) Fgetxattr(attr string, dest []byte) (int64, error) {
 	var ret C.ssize_t
 	var err error
 
@@ -182,7 +185,7 @@ func (fd *Fd) Fgetxattr(attr string, dest []byte) (int64, error) {
 	}
 }
 
-func (fd *Fd) Fsetxattr(attr string, data []byte, flags int) error {
+func (fd *Glfs) Fsetxattr(attr string, data []byte, flags int) error {
 
 	cattr := C.CString(attr)
 	defer C.free(unsafe.Pointer(cattr))
@@ -197,7 +200,7 @@ func (fd *Fd) Fsetxattr(attr string, data []byte, flags int) error {
 	return err
 }
 
-func (fd *Fd) Fremovexattr(attr string) error {
+func (fd *Glfs) Fremovexattr(attr string) error {
 
 	cattr := C.CString(attr)
 	defer C.free(unsafe.Pointer(cattr))
@@ -228,11 +231,7 @@ func direntName(dirent *syscall.Dirent) string {
 // n is the maximum number of items to return. If there are more items than
 // the maximum they can be obtained in successive calls. If maximum is 0
 // then all the items will be returned.
-func (fd *Fd) Readdir(n int) ([]os.FileInfo, error) {
-	var (
-		files []os.FileInfo
-	)
-
+func (fd *Glfs) Readdir(n int) (files []os.FileInfo, err error) {
 	for i := 0; n == 0 || i < n; i++ {
 		var stat syscall.Stat_t
 		var statP = (*C.struct_stat)(unsafe.Pointer(&stat))
@@ -255,10 +254,37 @@ func (fd *Fd) Readdir(n int) ([]os.FileInfo, error) {
 	return files, nil
 }
 
+func (fd *Glfs) ReaddirR(n int) ([]os.FileInfo, error) {
+	var (
+		files []os.FileInfo
+	)
+
+	for i := 0; n == 0 || i < n; i++ {
+		var (
+			stat    syscall.Stat_t
+			statP   = (*C.struct_stat)(unsafe.Pointer(&stat))
+			dirent  syscall.Dirent
+			direntP = (*C.struct_dirent)(unsafe.Pointer(&dirent))
+			cursor  *syscall.Dirent
+			cursorP = (**C.struct_dirent)(unsafe.Pointer(&cursor))
+		)
+
+		if ret := C.glfs_readdirplus_r(fd.fd, statP, direntP, cursorP); int(ret) != 0 {
+			return nil, fmt.Errorf("glfs_readdirplus_r %d: %+v", ret, stat)
+		}
+		if cursor == nil {
+			break
+		}
+		files = append(files, fileInfoFromStat(&stat, direntName(&dirent)))
+	}
+
+	return files, nil
+}
+
 // Readdirnames returns the names of files in a directory.
 //
 // n is the maximum number of items to return and works the same way as Readdir.
-func (fd *Fd) Readdirnames(n int) ([]string, error) {
+func (fd *Glfs) Readdirnames(n int) ([]string, error) {
 	var names []string
 
 	for i := 0; n == 0 || i < n; i++ {
